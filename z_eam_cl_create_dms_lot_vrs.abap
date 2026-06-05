@@ -71,8 +71,11 @@ FUNCTION z_eam_cl_create_dms_lot_vrs.
     " TDWS-DOSAR = 'A'. These constants are used only if TDWS yields nothing.
     gc_status_released TYPE dokst       VALUE 'FR',
     gc_status_archived TYPE dokst       VALUE 'AR',
-    " >>> FILL IN: must match the standard 'id_iprt_options' (EAM_CL_PRINT) <<<
-    gc_iprt_options    TYPE c LENGTH 30 VALUE 'IPRT_OPTIONS',
+    " Memory ID the print control is exported to. Must match the standard global
+    " 'id_iprt_options' that EAM_CL_PRINT imports from. In the EAM print framework
+    " these memory-id constants equal their own name (cf. ID_IPRT_ORDDATA), so the
+    " value is 'ID_IPRT_OPTIONS'. A mismatch makes EAM_CL_PRINT show the print dialog.
+    gc_iprt_options    TYPE c LENGTH 30 VALUE 'ID_IPRT_OPTIONS',
     " >>> FILL IN: storage category for the original (else DMS default category) <<<
     gc_storage_cat     TYPE c LENGTH 10 VALUE space,
     " >>> OPTIONAL: customer lock object for concurrency control (single key
