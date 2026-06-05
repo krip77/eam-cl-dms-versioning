@@ -103,6 +103,7 @@ FUNCTION z_eam_cl_create_dms_lot_vrs.
         lv_found      TYPE abap_bool,
         lv_skip       TYPE abap_bool,
         lv_locked     TYPE abap_bool,
+        lv_err        TYPE abap_bool,
         lv_doknr      TYPE draw-doknr,
         lv_dokvr      TYPE draw-dokvr,
         lv_doktl      TYPE draw-doktl,
@@ -278,7 +279,28 @@ FUNCTION z_eam_cl_create_dms_lot_vrs.
     ENDIF.
   ENDIF.
 
-*--- 6. Protocol + log + commit (common exit) ------------------------
+*--- 6. Evaluate overall result -------------------------------------
+* Promote to a hard error if ANY sub-step (check-in, object links,
+* classification, status) returned an error/abort - not just the first BAPI.
+  IF e_subrc = 0.
+    PERFORM returns_have_error USING lt_return CHANGING lv_err.
+    IF lv_err = abap_true.
+      e_subrc = 8.
+    ENDIF.
+  ENDIF.
+
+*--- 7. Discard partial changes on error (before logging) -----------
+* The document BAPIs run in update task and are only persisted by the COMMIT
+* WORK below. On error we must NOT leave a half-created/half-versioned document,
+* so roll back first; the log save then runs in a clean LUW.
+* Safe here: this follow-up action is configured to run AFTER the usage decision
+* is completed/committed, so the UD is in its own (already committed) LUW - this
+* ROLLBACK only affects our own DMS changes, never the UD.
+  IF i_test IS INITIAL AND e_subrc <> 0.
+    ROLLBACK WORK.
+  ENDIF.
+
+*--- 8. Protocol + log + commit (common exit) -----------------------
 * message: Inspection lot &1: follow-up action &2
   MESSAGE i040(eam_cl) WITH i_qals-prueflos gc_fm_name INTO ls_prot-prot_zeile.
   MOVE-CORRESPONDING sy TO ls_prot.
@@ -290,6 +312,12 @@ FUNCTION z_eam_cl_create_dms_lot_vrs.
     ls_prot-prot_zeile = ls_return-message.
     APPEND ls_prot TO e_protocol.
   ENDLOOP.
+
+* Drop incomplete return rows before logging. A BAPI 'return' on success is
+* often an empty row (no type/id/number); the application log rejects such a
+* row with message BL203 ("Message incomplete"). A valid message needs at
+* least type + id (work area) + number.
+  DELETE lt_return WHERE type IS INITIAL OR id IS INITIAL OR number IS INITIAL.
 
   IF i_no_log_save IS INITIAL AND
      i_test        IS INITIAL AND
@@ -305,6 +333,8 @@ FUNCTION z_eam_cl_create_dms_lot_vrs.
         ct_logs      = lt_logh ).
   ENDIF.
 
+* Persist: on success the document + log; on error only the log (the document
+* changes were already rolled back above).
   IF i_test IS INITIAL.
     COMMIT WORK.
   ENDIF.
@@ -1188,8 +1218,7 @@ FORM lock_series USING    iv_lock_object TYPE c
 
   DATA: lv_scope TYPE c LENGTH 50,
         lv_fm    TYPE rs38l_fnam,
-        ls_kv    TYPE ty_charkv,
-        ls_ret   TYPE bapiret2.
+        ls_kv    TYPE ty_charkv.
 
   CLEAR cv_locked.
   IF iv_lock_object IS INITIAL.
@@ -1218,15 +1247,15 @@ FORM lock_series USING    iv_lock_object TYPE c
         cv_locked = abap_true.
       ELSE.
 *       Timeout/error while locking - continue best-effort with a warning.
-        ls_ret-type    = 'W'.
-        ls_ret-message = 'Concurrency lock not set - continuing without lock'.
-        APPEND ls_ret TO ct_return.
+        PERFORM append_text_msg USING 'W'
+                'Concurrency lock not set - continuing without lock'
+          CHANGING ct_return.
       ENDIF.
     CATCH cx_root.
 *     Lock object missing or has a parameter other than SCOPE - degrade.
-      ls_ret-type    = 'W'.
-      ls_ret-message = 'Lock object missing/invalid - concurrency protection inactive'.
-      APPEND ls_ret TO ct_return.
+      PERFORM append_text_msg USING 'W'
+              'Lock object missing/invalid - concurrency protection inactive'
+        CHANGING ct_return.
   ENDTRY.
 ENDFORM.
 
@@ -1245,5 +1274,57 @@ FORM append_sysmsg_return CHANGING ct_return TYPE bapiret2_t.
   IF ls_ret-type IS INITIAL.
     ls_ret-type = 'E'.
   ENDIF.
+* Guarantee a complete message (avoid BL203). If no real system message was
+* set, fall back to the generic free-text message 00(398) = &1&2&3&4.
+  IF ls_ret-id IS INITIAL OR ls_ret-number IS INITIAL.
+    ls_ret-id     = '00'.
+    ls_ret-number = '398'.
+    IF ls_ret-message_v1 IS INITIAL.
+      ls_ret-message_v1 = 'Operation failed (no system message)'.
+    ENDIF.
+  ENDIF.
   APPEND ls_ret TO ct_return.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  APPEND_TEXT_MSG
+*&---------------------------------------------------------------------*
+*  Appends a complete free-text message to the return table using the generic
+*  message 00(398) = &1&2&3&4, so the application log never rejects it (BL203).
+*  The text is split across the four 50-char message variables.
+*----------------------------------------------------------------------*
+FORM append_text_msg USING    iv_type   TYPE bapiret2-type
+                              iv_text   TYPE csequence
+                     CHANGING ct_return TYPE bapiret2_t.
+
+  DATA: ls_ret TYPE bapiret2,
+        lv_c   TYPE c LENGTH 200.
+
+  lv_c = iv_text.
+  ls_ret-type       = iv_type.
+  ls_ret-id         = '00'.
+  ls_ret-number     = '398'.
+  ls_ret-message_v1 = lv_c(50).
+  ls_ret-message_v2 = lv_c+50(50).
+  ls_ret-message_v3 = lv_c+100(50).
+  ls_ret-message_v4 = lv_c+150(50).
+  ls_ret-message    = iv_text.
+  APPEND ls_ret TO ct_return.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  RETURNS_HAVE_ERROR
+*&---------------------------------------------------------------------*
+*  TRUE if any return row is an error ('E') or abort ('A'). Warnings ('W'),
+*  info ('I') and success ('S') do not count - so the optional concurrency
+*  warning never turns the run into a failure.
+*----------------------------------------------------------------------*
+FORM returns_have_error USING    it_return TYPE bapiret2_t
+                        CHANGING cv_error  TYPE abap_bool.
+  DATA ls_ret TYPE bapiret2.
+  CLEAR cv_error.
+  LOOP AT it_return INTO ls_ret WHERE type CA 'AE'.
+    cv_error = abap_true.
+    EXIT.
+  ENDLOOP.
 ENDFORM.
