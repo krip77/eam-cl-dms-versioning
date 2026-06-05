@@ -106,6 +106,7 @@ FUNCTION z_eam_cl_create_dms_lot_vrs.
         lv_new_dokvr  TYPE draw-dokvr,
         lv_status_rel TYPE dokst,
         lv_status_arc TYPE dokst,
+        lv_rel_auto   TYPE abap_bool,
         ls_return     TYPE bapiret2,
         lt_return     TYPE bapiret2_t,
         lt_logh       TYPE bal_t_logh,
@@ -166,7 +167,7 @@ FUNCTION z_eam_cl_create_dms_lot_vrs.
 *   doctype; constants are only the fallback if customizing yields nothing.
   PERFORM determine_statuses USING ls_otpl-doctype
                                    gc_status_released gc_status_archived
-                             CHANGING lv_status_rel lv_status_arc.
+                             CHANGING lv_status_rel lv_status_arc lv_rel_auto.
 
 *--- 2. Technical object PER LOT (directly from i_qals) ----------------
   PERFORM get_tech_object USING i_qals
@@ -246,7 +247,7 @@ FUNCTION z_eam_cl_create_dms_lot_vrs.
                                        lv_dokob lv_objky i_qals
                                        gc_class gc_classtype lt_keys
                                        gc_char_lot
-                                       lv_status_rel gc_wsappl_pdf
+                                       lv_status_rel lv_rel_auto gc_wsappl_pdf
                                        gc_storage_cat
                                  CHANGING lv_new_dokvr lt_return ls_return.
       IF ls_return-type CA 'EAX'.
@@ -262,7 +263,7 @@ FUNCTION z_eam_cl_create_dms_lot_vrs.
       PERFORM create_first_version USING ls_otpl lv_pdf lv_formtitle lv_aufnr
                                          lv_dokob lv_objky i_qals
                                          gc_class gc_classtype lt_keys
-                                         gc_char_lot lv_status_rel
+                                         gc_char_lot lv_status_rel lv_rel_auto
                                          gc_wsappl_pdf gc_storage_cat
                                    CHANGING lv_doknr lv_dokvr lv_doktl
                                             lt_return ls_return.
@@ -665,6 +666,7 @@ FORM create_first_version USING    is_otpl        TYPE eam_cl_cu_otpl
                                    it_keys        TYPE ty_charkv_t
                                    iv_char_lot    TYPE atnam
                                    iv_status      TYPE dokst
+                                   iv_rel_auto    TYPE abap_bool
                                    iv_wsappl      TYPE dappl
                                    iv_storage_cat TYPE c
                           CHANGING cv_doknr       TYPE draw-doknr
@@ -692,7 +694,12 @@ FORM create_first_version USING    is_otpl        TYPE eam_cl_cu_otpl
   CLEAR: cv_doknr, cv_dokvr, cv_doktl, cs_return.
 
   ls_docdata-documenttype = is_otpl-doctype.
-  ls_docdata-statusextern = iv_status.
+* When the released status is the initial status type, leave it blank: the
+* system assigns it automatically once the original is checked in. Setting it
+* explicitly (it requires "check in required") would raise message 26269.
+  IF iv_rel_auto = abap_false.
+    ls_docdata-statusextern = iv_status.
+  ENDIF.
 
 * Object links: technical object + order
   ls_drad-objecttype = iv_dokob.
@@ -788,6 +795,7 @@ FORM create_new_version USING    is_otpl        TYPE eam_cl_cu_otpl
                                  it_keys        TYPE ty_charkv_t
                                  iv_char_lot    TYPE atnam
                                  iv_status      TYPE dokst
+                                 iv_rel_auto    TYPE abap_bool
                                  iv_wsappl      TYPE dappl
                                  iv_storage_cat TYPE c
                         CHANGING cv_new_dokvr   TYPE draw-dokvr
@@ -887,9 +895,13 @@ FORM create_new_version USING    is_otpl        TYPE eam_cl_cu_otpl
                          CHANGING ct_return.
   ENDIF.
 
-* Status on the new version.
-  PERFORM set_status USING is_otpl-doctype iv_doknr cv_new_dokvr iv_doktl iv_status
-                     CHANGING ct_return.
+* Status on the new version. Skip when the released status is the initial
+* status type: the system assigns it automatically once the original is
+* checked in; an explicit SETSTATUS would raise message 26269.
+  IF iv_rel_auto = abap_false.
+    PERFORM set_status USING is_otpl-doctype iv_doknr cv_new_dokvr iv_doktl iv_status
+                       CHANGING ct_return.
+  ENDIF.
 ENDFORM.
 
 *&---------------------------------------------------------------------*
@@ -1103,15 +1115,25 @@ ENDFORM.
 *    - Archived = the status whose status type is Archive (TDWS-DOSAR = 'A').
 *  Falls back to the supplied default constants if customizing yields nothing.
 *  ORDER BY makes the pick deterministic when several statuses qualify.
+*
+*  cv_rel_auto: TRUE when the released status is also the INITIAL status
+*  (status type 'I'). Such a status is assigned automatically by the system on
+*  save/check-in, so it must NOT be set explicitly. Here the released status is
+*  configured with "check in required", so an explicit early SETSTATUS would
+*  raise message 26269 ("Status can only be set when all originals are stored").
 *----------------------------------------------------------------------*
 FORM determine_statuses USING    iv_doctype  TYPE draw-dokar
                                  iv_def_rel  TYPE dokst
                                  iv_def_arch TYPE dokst
                         CHANGING cv_released TYPE dokst
-                                 cv_archived TYPE dokst.
+                                 cv_archived TYPE dokst
+                                 cv_rel_auto TYPE abap_bool.
+
+  DATA lv_dosar TYPE tdws-dosar.
 
   cv_released = iv_def_rel.
   cv_archived = iv_def_arch.
+  CLEAR cv_rel_auto.
 
   SELECT dokst FROM tdws UP TO 1 ROWS
     INTO @cv_released
@@ -1131,6 +1153,15 @@ FORM determine_statuses USING    iv_doctype  TYPE draw-dokar
   ENDSELECT.
   IF sy-subrc <> 0.
     cv_archived = iv_def_arch.
+  ENDIF.
+
+* Is the released status also the initial status (type 'I')?
+  SELECT SINGLE dosar FROM tdws
+    INTO @lv_dosar
+    WHERE dokar = @iv_doctype
+      AND dokst = @cv_released.
+  IF sy-subrc = 0 AND lv_dosar = 'I'.
+    cv_rel_auto = abap_true.
   ENDIF.
 ENDFORM.
 
