@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Versionshanterad DMS-checklista</title>
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --surface: #ffffff;
+    --text: #1c2430;
+    --muted: #5b6776;
+    --border: #e3e7ec;
+    --accent: #2563eb;
+    --accent-soft: #eaf1ff;
+    --code-bg: #f4f6f8;
+    --code-text: #0f3a8a;
+    --amber: #b4690e;
+    --amber-soft: #fdf2e1;
+    --green: #1a7f4b;
+    --shadow: 0 1px 2px rgba(16, 24, 40, .06), 0 8px 24px rgba(16, 24, 40, .06);
+    --radius: 14px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f141b;
+      --surface: #161d27;
+      --text: #e6edf5;
+      --muted: #9aa7b6;
+      --border: #263140;
+      --accent: #5b9bff;
+      --accent-soft: #16233b;
+      --code-bg: #0e1620;
+      --code-text: #9ec5ff;
+      --amber: #e0a566;
+      --amber-soft: #2a2113;
+      --green: #6ed29a;
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 12px 30px rgba(0,0,0,.35);
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, "Apple Color Emoji", sans-serif;
+    font-size: 16px;
+    line-height: 1.65;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 40px 22px 80px; }
+
+  header.doc {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 32px 32px 28px;
+    box-shadow: var(--shadow);
+  }
+  .eyebrow {
+    margin: 0 0 10px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+  h1 { margin: 0 0 14px; font-size: 30px; line-height: 1.2; letter-spacing: -.01em; }
+  .overview { margin: 0; color: var(--muted); font-size: 16.5px; }
+  .meta {
+    margin-top: 22px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .chip {
+    font-size: 13px;
+    color: var(--muted);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 5px 12px;
+  }
+  .chip strong { color: var(--text); font-weight: 600; }
+
+  nav.toc {
+    margin: 26px 0 8px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px 20px;
+    box-shadow: var(--shadow);
+  }
+  nav.toc p { margin: 0 0 8px; font-size: 12px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+  nav.toc ol { margin: 0; padding-left: 20px; columns: 2; column-gap: 28px; }
+  @media (max-width: 560px) { nav.toc ol { columns: 1; } }
+  nav.toc a { color: var(--text); text-decoration: none; }
+  nav.toc a:hover { color: var(--accent); text-decoration: underline; }
+
+  section.card {
+    margin-top: 26px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 26px 32px 28px;
+    box-shadow: var(--shadow);
+  }
+  h2 {
+    margin: 0 0 16px;
+    font-size: 20px;
+    letter-spacing: -.01em;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  p { margin: 0 0 14px; }
+  section.card > p:last-child, section.card > ul:last-child { margin-bottom: 0; }
+  ul { margin: 0 0 14px; padding-left: 22px; }
+  li { margin: 6px 0; }
+  li > strong { color: var(--text); }
+
+  code {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    font-size: .88em;
+    background: var(--code-bg);
+    color: var(--code-text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 1px 6px;
+    white-space: nowrap;
+  }
+  pre.code {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 18px;
+    overflow-x: auto;
+    margin: 0;
+    line-height: 1.5;
+  }
+  pre.code code {
+    background: none;
+    border: 0;
+    padding: 0;
+    color: var(--text);
+    white-space: pre;
+    font-size: 13.5px;
+  }
+  figure { margin: 0 0 8px; }
+  figcaption { margin-top: 8px; font-size: 12.5px; color: var(--muted); }
+
+  .diagram {
+    background: var(--surface);
+    border: 1px dashed var(--border);
+    border-radius: 10px;
+    padding: 14px;
+    overflow-x: auto;
+    text-align: center;
+  }
+  pre.mermaid { margin: 0; background: none; border: 0; }
+
+  .tag {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .04em;
+    padding: 2px 8px;
+    border-radius: 999px;
+    vertical-align: middle;
+  }
+  .tag-confirm { color: var(--amber); background: var(--amber-soft); border: 1px solid color-mix(in srgb, var(--amber) 35%, transparent); }
+
+  /* Checklist */
+  ol.todos { list-style: none; margin: 0; padding: 0; counter-reset: t; }
+  ol.todos li {
+    counter-increment: t;
+    position: relative;
+    display: grid;
+    grid-template-columns: 34px 1fr auto;
+    gap: 14px;
+    align-items: start;
+    padding: 14px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  ol.todos li:last-child { border-bottom: 0; padding-bottom: 0; }
+  ol.todos li::before {
+    content: counter(t);
+    grid-column: 1;
+    width: 28px; height: 28px;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 13px; font-weight: 700;
+    color: var(--accent);
+    background: var(--accent-soft);
+    border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+    border-radius: 50%;
+  }
+  .todo-body { grid-column: 2; }
+  .todo-id { display: block; font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); margin-bottom: 2px; }
+  .status {
+    grid-column: 3;
+    align-self: center;
+    font-size: 12px; font-weight: 600;
+    color: var(--amber);
+    background: var(--amber-soft);
+    border: 1px solid color-mix(in srgb, var(--amber) 30%, transparent);
+    border-radius: 999px;
+    padding: 3px 10px;
+    white-space: nowrap;
+  }
+  .status.done {
+    color: var(--green);
+    background: color-mix(in srgb, var(--green) 14%, transparent);
+    border-color: color-mix(in srgb, var(--green) 30%, transparent);
+  }
+
+  footer { margin-top: 32px; text-align: center; color: var(--muted); font-size: 13px; }
+
+  @media print {
+    body { background: #fff; }
+    .wrap { max-width: none; padding: 0; }
+    section.card, header.doc, nav.toc { box-shadow: none; break-inside: avoid; }
+    nav.toc { display: none; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="doc">
+    <p class="eyebrow">Teknisk plan &middot; ABAP / DMS</p>
+    <h1>Versionshanterad DMS-checklista</h1>
+    <p class="overview">Ny lotbaserad Z-FM som ersätter <code>EAM_CL_CREATE_DMS_LOT</code> och, istället för att skapa ett nytt dokument per checklista, skapar en ny version av ett befintligt dokument kopplat till det tekniska objektet (EQ/FL) + ordern, identifierat via provplan i klassificeringen. Äldre version arkiveras.</p>
+    <div class="meta">
+      <span class="chip"><strong>Ny FM:</strong> Z_EAM_CL_CREATE_DMS_LOT_VRS</span>
+      <span class="chip"><strong>Ersätter:</strong> EAM_CL_CREATE_DMS_LOT</span>
+      <span class="chip"><strong>Status:</strong> Grundflöde klart &middot; 1 punkt på backlog</span>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <p>Innehåll</p>
+    <ol>
+      <li><a href="#bakgrund">Bakgrund och återanvändning</a></li>
+      <li><a href="#flode">Flöde</a></li>
+      <li><a href="#implementation">Implementation</a></li>
+      <li><a href="#konstanter">Konstanter att bekräfta</a></li>
+      <li><a href="#designval">Designval</a></li>
+      <li><a href="#forbattringar">Förbättringar</a></li>
+      <li><a href="#checklista">Checklista / arbetsmoment</a></li>
+    </ol>
+  </nav>
+
+  <section class="card" id="bakgrund">
+    <h2>Bakgrund och återanvändning</h2>
+    <p>Båda standard-FM:erna (<code>eam_cl_create_dms_lot</code>, <code>eam_cl_create_dms_order</code>) gör i grunden: (1) läser config via <code>cl_eam_cl_cu=&gt;otpl_read</code> &rarr; <code>ls_otpl</code> (innehåller <code>DOCTYPE</code>, <code>STORAGECATEGORY</code>, <code>WORKPAPER</code>), (2) genererar spool via <code>SUBMIT EAM_CL_PRINT</code>, (3) <code>PERFORM create_dms_from_spool ... ls_drad</code> som skapar dokumentet och objektlänken. Idag länkas dokumentet bara till lot (<code>QALS</code>) eller order (<code>PMAUFK</code>):</p>
+    <figure>
+<pre class="code"><code>  ls_drad-dokob = 'QALS'.
+  ls_drad-objky = i_qals-prueflos.</code></pre>
+      <figcaption>eam_cl_create_dms_lot, rad 109–110</figcaption>
+    </figure>
+    <p>Vi bygger en ny FM <code>Z_EAM_CL_CREATE_DMS_LOT_VRS</code> med <strong>samma interface</strong> som lot-FM:en (drop-in i QM follow-up action), men ersätter steg 3 med egen logik (BAPI:er) och länkar mot tekniskt objekt + order.</p>
+  </section>
+
+  <section class="card" id="flode">
+    <h2>Flöde</h2>
+    <div class="diagram">
+<pre class="mermaid">
+flowchart TD
+  Start[Start follow-up action] --> Guards["Guard: läsa lot/order, otpl_read, validera workpaper=EAM_CL_PRINT"]
+  Guards -->|deaktiverad / ej config| Stop[Return]
+  Guards --> Statuses["Härled status från TDWS: released=FRKNZ, archived=DOSAR='A'"]
+  Statuses --> Tech["Tekniskt objekt direkt från i_qals: LS_EQUNR &rarr; EQUI, annars LS_TPLNR &rarr; IFLOT"]
+  Tech --> Spool["Generera spool via EAM_CL_PRINT &rarr; konvertera till PDF"]
+  Spool --> Lock["ENQUEUE serie (valfritt låsobjekt): tekn objekt + nyckel-chars"]
+  Lock --> Search["Sök dokument: doctype + objektlänk EQ/FL + separata chars D_CL_PLNTY/PLNNR/PLNAL/WERKS/MATNR"]
+  Search -->|hittad| NewVrs["BAPI_DOCUMENT_CREATENEWVRS2"]
+  NewVrs --> Checkin["Checka in nytt PDF som original"]
+  Checkin --> Archive["Sätt föregående version till Archived"]
+  Search -->|ej hittad| Create["BAPI_DOCUMENT_CREATE2 + klassificering"]
+  Archive --> Links["Verifiera/komplettera länkar: order + tekniskt objekt"]
+  Create --> Links
+  Links --> Status["Sätt status Released på aktuell version"]
+  Status --> Log["e_protocol + add_msg_to_log + COMMIT (ej i_test)"]
+</pre>
+    </div>
+  </section>
+
+  <section class="card" id="implementation">
+    <h2>Implementation</h2>
+    <ul>
+      <li><strong>Interface:</strong> spegla <code>EAM_CL_CREATE_DMS_LOT</code> exakt (<code>I_QALS</code>, <code>I_QAVE</code>, <code>I_QAPO</code>, <code>I_NO_LOG_SAVE</code>, <code>I_TEST</code>, <code>I_DIALOG</code>, <code>E_SUBRC</code>, <code>E_PROTOCOL</code>).</li>
+      <li><strong>Guard clauses:</strong> läs <code>i_maintorderinspectionlot</code> (skip om <code>mainchecklistisdeactivated</code>), läs <code>aufk</code>, <code>otpl_read</code>, validera <code>t390</code>/<code>EAM_CL_PRINT</code> och hämta formulärtitel.</li>
+      <li><strong>Status från customizing:</strong> <code>determine_statuses</code> läser released/archived ur <code>TDWS</code> per doctype – released = <code>FRKNZ = 'X'</code>, archived = status typ <code>DOSAR = 'A'</code>. Konstanterna <code>gc_status_released</code>/<code>gc_status_archived</code> är bara fallback.</li>
+      <li><strong>Tekniskt objekt (per lot!):</strong> läs objektet <strong>direkt från <code>i_qals</code></strong> – <code>EQUI</code> om <code>LS_EQUNR</code> finns, annars <code>IFLOT</code> från <code>LS_TPLNR</code>. En order kan ha en objektlista med en lot per objekt, så objektet måste tas per lot, inte från orderhuvudet.</li>
+      <li><strong>Spool &rarr; PDF:</strong> återanvänd EXPORT/<code>SUBMIT</code>/IMPORT-blocket; konvertera spool med <code>CONVERT_OTFSPOOLJOB_2_PDF</code> (fallback <code>CONVERT_ABAPSPOOLJOB_2_PDF</code>) &rarr; <code>SCMS_XSTRING_TO_BINARY</code> &rarr; <code>DRAO</code>.</li>
+      <li><strong>Sök befintligt dokument:</strong> <code>SELECT FROM drad WHERE dokar = &lt;doctype&gt; AND dokob = &lt;EQUI/IFLOT&gt; AND objky = &lt;tekn objekt&gt;</code>; för träffarna läs klassificering (klasstyp <code>017</code>, klass <code>D_CL</code>, objekttabell <code>DRAW</code>) via <code>BAPI_OBJCL_GETDETAIL</code> och matcha <strong>alla nyckel-egenskaper var för sig</strong> (ingen konkatenering): <code>D_CL_PLNTY</code>/<code>D_CL_PLNNR</code>/<code>D_CL_PLNAL</code>/<code>D_CL_WERKS</code>/<code>D_CL_MATNR</code>. Match kräver att samtliga stämmer; välj högsta <code>DOKVR</code>.</li>
+      <li><strong>Gren – ej hittad (första version):</strong> <code>BAPI_DOCUMENT_CREATE2</code> med <code>doctype</code>/<code>storagecategory</code>, beskrivning, objektlänkar (<code>PMAUFK</code> order + <code>EQUI</code>/<code>IFLOT</code> tekn objekt), PDF-fil och status Released; sätt klassificering via <code>BAPI_OBJCL_CHANGE</code>.</li>
+      <li><strong>Gren – hittad (ny version):</strong> <code>BAPI_DOCUMENT_CREATENEWVRS2</code> (kopierar objektlänkar + klassificering enligt doc-type-config "When New Version 1"); checka in nytt PDF som original (<code>BAPI_DOCUMENT_CHECKIN2</code>); återställ nyckel-egenskaperna; sätt <strong>föregående version</strong> till Archived (<code>BAPI_DOCUMENT_SETSTATUS</code>).</li>
+      <li><strong>Samtidighet (valfritt låsobjekt):</strong> <code>lock_series</code> gör <code>ENQUEUE_&lt;lockobjekt&gt;</code> (nyckelfält <code>SCOPE</code>, CHAR50, läge E) på serien med <code>_wait = 'X'</code>; släpps vid <code>COMMIT WORK</code>. Saknas objektet degraderar FM:en med varning. <code>gc_lock_object = space</code> stänger av.</li>
+      <li><strong>Idempotens (valfritt):</strong> om <code>gc_char_lot</code> är satt lagras <code>PRUEFLOS</code> på versionen och samma lot skapar ingen dubblettversion vid omkörning.</li>
+      <li><strong>Säkerhetskontroll länkar:</strong> verifiera att aktuell version har länk till tekniskt objekt (EQ/FL) och till aktuell order; lägg till saknad länk (skyddsnät trots copy-on-new-version).</li>
+      <li><strong>Status:</strong> aktuell version &rarr; Released, gammal &rarr; Archived (värden ur <code>TDWS</code>).</li>
+      <li><strong>Logg/commit:</strong> bygg <code>E_PROTOCOL</code> (meddelanden), anropa <code>cl_eam_cl_msg_tool=&gt;add_msg_to_log</code>, <code>COMMIT WORK</code> om inte <code>I_TEST</code>. Använd <code>i_test</code> som testrun i BAPI:erna (ingen commit).</li>
+    </ul>
+  </section>
+
+  <section class="card" id="konstanter">
+    <h2>Konstanter <span style="font-weight:400;font-size:14px;color:var(--muted)">(bekräftade mot systemets customizing)</span></h2>
+    <ul>
+      <li><code>gc_classtype = '017'</code> (Document Management), klass <code>gc_class = 'D_CL'</code>.</li>
+      <li><strong>Nyckel-egenskaper – en char per fält</strong> (klass <code>D_CL</code>, ren läs/skriv utan parsning):
+        <ul>
+          <li><code>gc_char_plnty = 'D_CL_PLNTY'</code> (CHAR1) &larr; <code>QALS-PLNTY</code> (provplanstyp)</li>
+          <li><code>gc_char_plnnr = 'D_CL_PLNNR'</code> (CHAR8) &larr; <code>QALS-PLNNR</code> (provplansgrupp)</li>
+          <li><code>gc_char_plnal = 'D_CL_PLNAL'</code> (CHAR2) &larr; <code>QALS-PLNAL</code> (gruppräknare)</li>
+          <li><code>gc_char_werk = 'D_CL_WERKS'</code> (CHAR4) &larr; <code>QALS-WERK</code> (verk)</li>
+          <li><code>gc_char_matnr = 'D_CL_MATNR'</code> (CHAR18) &larr; <code>QALS-MATNR</code> (material)</li>
+        </ul>
+      </li>
+      <li><code>gc_char_lot</code> = valfri egenskap för idempotens (lagrar <code>PRUEFLOS</code>); <code>space</code> = av.</li>
+      <li><code>gc_status_released = 'FR'</code>, <code>gc_status_archived = 'AR'</code> är <strong>fallback</strong> – statusarna läses i runtime ur <code>TDWS</code> (released <code>FRKNZ='X'</code>, archived <code>DOSAR='A'</code>).</li>
+      <li><code>gc_lock_object</code> = valfritt kundlåsobjekt för samtidighet (<code>space</code> = av).</li>
+      <li><code>gc_storage_cat</code> = lagringskategori för originalet (<code>space</code> = DMS-default).</li>
+    </ul>
+  </section>
+
+  <section class="card" id="designval">
+    <h2>Designval <span style="font-weight:400;font-size:14px;color:var(--muted)">(förvalda – säg till om du vill ändra)</span></h2>
+    <ul>
+      <li><strong>Objekt per lot:</strong> objektet tas från <code>i_qals</code> (<code>LS_EQUNR</code>/<code>LS_TPLNR</code>). Är båda ifyllda (utrustning installerad på funktionsplats) väljs <code>EQUI</code>, annars <code>IFLOT</code>.</li>
+      <li><strong>Inget tekniskt objekt på loten:</strong> versionshantering är inte möjlig &rarr; logga varning och avbryt (<code>e_subrc = 4</code>).</li>
+      <li><strong>Orderlänkar ackumuleras:</strong> vi säkerställer enbart aktuell order + tekniskt objekt på nya versionen; ev. medkopierade äldre orderlänkar lämnas kvar som historik.</li>
+      <li><strong>Material som egen char (CHAR18):</strong> mycket långa (extended) materialnummer trunkeras i egenskapen; med korta materialnummer är detta oproblematiskt och matchningen är konsekvent.</li>
+    </ul>
+  </section>
+
+  <section class="card" id="forbattringar">
+    <h2>Förbättringar / sånt som kan ha missats</h2>
+    <ul>
+      <li><strong>Idempotens (klart, valfritt):</strong> <code>PRUEFLOS</code> kan lagras i <code>gc_char_lot</code> så att samma lots omkörning inte skapar dubblettversion. Av som default.</li>
+      <li><strong>Samtidighet/lås (klart, valfritt):</strong> <code>ENQUEUE</code> på serien (tekn objekt + nyckel-chars) via valfritt kundlåsobjekt, släpps vid <code>COMMIT WORK</code>. Degraderar med varning om låsobjektet saknas.</li>
+      <li><strong>Statusnätverk (klart):</strong> statusarna läses dynamiskt ur <code>TDWS</code> (released = <code>FRKNZ='X'</code>, archived = status typ <code>DOSAR='A'</code>); konstanterna är fallback. Övergången Released &rarr; Archived måste fortfarande vara tillåten i statusnätet.</li>
+      <li><strong>Content versions (backlog):</strong> när ett protokoll redan finns för loten ska den existerande versionen <em>uppdateras</em> med ny PDF i stället för att hoppas över, så justeringar fångas. Förutsätter content versions på doktypen; kräver check-out av gammalt original + ersättning, och jämförelse av filstorlek (ev. hash) för att undvika onödiga content-instanser. <strong>Avvaktar tills grundflödet är verifierat.</strong></li>
+      <li><strong>Flera matchande dokument:</strong> tie-breaker = högsta version/senaste; överväg att logga om fler än ett "serie"-dokument hittas (datafel).</li>
+      <li><strong>Behörighet:</strong> <code>C_DRAW_*</code>-kontroller hanteras av BAPI:erna; testa med körande användares behörighet.</li>
+    </ul>
+  </section>
+
+  <section class="card" id="checklista">
+    <h2>Checklista / arbetsmoment</h2>
+    <ol class="todos">
+      <li>
+        <div class="todo-body">
+          <span class="todo-id">skeleton</span>
+          Skapa <code>Z_EAM_CL_CREATE_DMS_LOT_VRS</code> med samma interface som <code>EAM_CL_CREATE_DMS_LOT</code> och kopiera guard clauses (lot/order-låsning, otpl_read, workpaper-validering, formulärtitel).
+        </div>
+        <span class="status done">Klart</span>
+      </li>
+      <li>
+        <div class="todo-body">
+          <span class="todo-id">techobj</span>
+          Läs tekniskt objekt direkt från i_qals (per lot): LS_EQUNR &rarr; EQUI, annars LS_TPLNR &rarr; IFLOT. Varning + avbryt när objekt saknas.
+        </div>
+        <span class="status done">Klart</span>
+      </li>
+      <li>
+        <div class="todo-body">
+          <span class="todo-id">spool-pdf</span>
+          Återanvänd spool-genereringen (EXPORT/SUBMIT EAM_CL_PRINT/IMPORT) och konvertera spool till PDF (CONVERT_OTFSPOOLJOB_2_PDF &rarr; SCMS_XSTRING_TO_BINARY &rarr; DRAO).
+        </div>
+        <span class="status done">Klart</span>
+      </li>
+      <li>
+        <div class="todo-body">
+          <span class="todo-id">search</span>
+          Sökfunktion: DRAD på doctype + objektlänk (EQUI/IFLOT) och klassificeringsmatchning (klasstyp 017, klass D_CL, separata chars D_CL_PLNTY/PLNNR/PLNAL/WERKS/MATNR); välj högsta DOKVR.
+        </div>
+        <span class="status done">Klart</span>
+      </li>
+      <li>
+        <div class="todo-body">
+          <span class="todo-id">create-first</span>
+          Gren första version: BAPI_DOCUMENT_CREATE2 (doctype, storagecategory, beskrivning, objektlänkar order+tekn objekt, PDF, status Released) + BAPI_OBJCL sätter klassificering.
+        </div>
+        <span class="status done">Klart</span>
+      </li>
+      <li>
+        <div class="todo-body">
+          <span class="todo-id">create-version</span>
+          Gren ny version: BAPI_DOCUMENT_CREATENEWVRS2 + check-in av nytt PDF + sätt föregående version till Archived.
+        </div>
+        <span class="status done">Klart</span>
+      </li>
+      <li>
+        <div class="todo-body">
+          <span class="todo-id">links-status</span>
+          Säkerställ objektlänkar (order + tekniskt objekt) på aktuell version och sätt status Released/Archived.
+        </div>
+        <span class="status done">Klart</span>
+      </li>
+      <li>
+        <div class="todo-body">
+          <span class="todo-id">concurrency-idempotency</span>
+          Lås (ENQUEUE, valfritt låsobjekt) runt sök/skapa och idempotenskontroll på PRUEFLOS för att undvika dubbletter/race.
+        </div>
+        <span class="status done">Klart</span>
+      </li>
+      <li>
+        <div class="todo-body">
+          <span class="todo-id">logging</span>
+          Bygg E_PROTOCOL, anropa cl_eam_cl_msg_tool=&gt;add_msg_to_log och hantera COMMIT/i_test samt felhantering från BAPI-returer.
+        </div>
+        <span class="status done">Klart</span>
+      </li>
+      <li>
+        <div class="todo-body">
+          <span class="todo-id">constants</span>
+          Definiera och bekräfta konstanter: gc_class (D_CL), nyckel-chars D_CL_*, gc_status_released/archived.
+        </div>
+        <span class="status done">Klart</span>
+      </li>
+      <li>
+        <div class="todo-body">
+          <span class="todo-id">status-from-tdws</span>
+          Läs released/archived-status från DMS-customizing (TDWS) per doctype: released = FRKNZ = 'X', archived = status typ DOSAR = 'A'. Konstanter blir fallback.
+        </div>
+        <span class="status done">Klart</span>
+      </li>
+      <li>
+        <div class="todo-body">
+          <span class="todo-id">content-versions-update</span>
+          SENARE (efter att grundflödet verifierats): när ett protokoll redan finns för loten ska existerande version uppdateras med ny PDF i stället för att hoppas över (justeringar ska fångas). Förutsätter content versions på doktypen; check-out av gammalt original + ersätt med ny PDF; jämför filstorlek (ev. hash) för att undvika onödiga content-instanser.
+        </div>
+        <span class="status">Backlog</span>
+      </li>
+    </ol>
+  </section>
+
+  <footer>
+    Versionshanterad DMS-checklista &middot; teknisk plan för Z_EAM_CL_CREATE_DMS_LOT_VRS
+  </footer>
+
+</div>
+
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+  const dark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: dark ? 'dark' : 'neutral',
+    flowchart: { useMaxWidth: true, htmlLabels: true, curve: 'basis' }
+  });
+</script>
+</body>
+</html>
