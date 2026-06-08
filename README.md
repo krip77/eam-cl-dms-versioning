@@ -1,4 +1,4 @@
-# Z_EAM_CL_CREATE_DMS_LOT_VRS
+# ZVFI_FG_E_AM_D_CR_DMS_LOT_VER
 
 Version-managed DMS checklist documents for QM follow-up actions (SAP EAM/QM).
 
@@ -45,8 +45,8 @@ previous version, and releases the newest one.
 
 ## Files
 
-- [`z_eam_cl_create_dms_lot_vrs.abap`](z_eam_cl_create_dms_lot_vrs.abap) – the function module + helper FORMs.
-- [`versionshanterad_dms-checklista.html`](versionshanterad_dms-checklista.html) – technical design document (Swedish).
+- [`zvfi_fg_e_am_d_cr_dms_lot_ver.abap`](zvfi_fg_e_am_d_cr_dms_lot_ver.abap) – the function module + helper FORMs.
+- [`plans/`](plans/) – all plans and design docs for this work (see [`plans/README.md`](plans/README.md)); the design document moved to [`plans/design-dokument.html`](plans/design-dokument.html).
 
 ## Configuration prerequisites
 

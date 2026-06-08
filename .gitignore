@@ -8,3 +8,4 @@
 # SAP standard reference sources (proprietary - not for public publication)
 eam_cl_create_dms_lot.abap
 eam_cl_create_dms_order.abap
+INCLUDE LEAM_CL_FOLF01.abap
