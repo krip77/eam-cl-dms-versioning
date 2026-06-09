@@ -1264,66 +1264,6 @@ FORM set_doc_classification USING    iv_doctype   TYPE draw-dokar
 ENDFORM.
 
 *&---------------------------------------------------------------------*
-*&      Form  ENSURE_OBJECT_LINK
-*&---------------------------------------------------------------------*
-*  Adds an object link if it is missing on the version (idempotent).
-*----------------------------------------------------------------------*
-*  iv_dokob/iv_objky are generic (TYPE c) so that both typed fields and
-*  literals ('PMAUFK', AUFNR of a different length) can be passed by reference.
-FORM ensure_object_link USING    iv_doctype TYPE draw-dokar
-                                 iv_doknr   TYPE draw-doknr
-                                 iv_dokvr   TYPE draw-dokvr
-                                 iv_doktl   TYPE draw-doktl
-                                 iv_dokob   TYPE c
-                                 iv_objky   TYPE c
-                        CHANGING ct_return  TYPE bapiret2_t.
-
-  DATA: lt_links TYPE TABLE OF bapi_doc_drad,
-        ls_link  TYPE bapi_doc_drad,
-        ls_ret   TYPE bapiret2.
-
-  IF iv_objky IS INITIAL.
-    RETURN.
-  ENDIF.
-
-  CALL FUNCTION 'BAPI_DOCUMENT_GETDETAIL2'
-    EXPORTING
-      documenttype    = iv_doctype
-      documentnumber  = iv_doknr
-      documentpart    = iv_doktl
-      documentversion = iv_dokvr
-      getobjectlinks  = 'X'
-    IMPORTING
-      return          = ls_ret
-    TABLES
-      objectlinks     = lt_links.
-
-  READ TABLE lt_links TRANSPORTING NO FIELDS
-       WITH KEY objecttype = iv_dokob
-                objectkey  = iv_objky.
-  IF sy-subrc = 0.
-    RETURN.                            " link already exists
-  ENDIF.
-
-  CLEAR lt_links.
-  ls_link-objecttype = iv_dokob.
-  ls_link-objectkey  = iv_objky.
-  APPEND ls_link TO lt_links.
-
-  CALL FUNCTION 'BAPI_DOCUMENT_CHANGE2'
-    EXPORTING
-      documenttype    = iv_doctype
-      documentnumber  = iv_doknr
-      documentpart    = iv_doktl
-      documentversion = iv_dokvr
-    IMPORTING
-      return          = ls_ret
-    TABLES
-      objectlinks     = lt_links.
-  APPEND ls_ret TO ct_return.
-ENDFORM.
-
-*&---------------------------------------------------------------------*
 *&      Form  SET_DOC_CHAR
 *&---------------------------------------------------------------------*
 *  Sets/updates a characteristic in the document's classification without
