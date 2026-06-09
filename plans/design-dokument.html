@@ -229,11 +229,12 @@
   <header class="doc">
     <p class="eyebrow">Teknisk plan &middot; ABAP / DMS</p>
     <h1>Versionshanterad DMS-checklista</h1>
-    <p class="overview">Ny lotbaserad Z-FM som ersätter <code>EAM_CL_CREATE_DMS_LOT</code> och, istället för att skapa ett nytt dokument per checklista, skapar en ny version av ett befintligt dokument kopplat till det tekniska objektet (EQ/FL) + ordern, identifierat via provplan i klassificeringen. Äldre version arkiveras.</p>
+    <p class="overview">Ny lotbaserad Z-FM som ersätter <code>EAM_CL_CREATE_DMS_LOT</code> och, istället för att skapa ett nytt dokument per checklista, skapar en ny version av ett befintligt dokument kopplat till det tekniska objektet (EQ/FL) + ordern + inspektionsloten, identifierat via provplan i klassificeringen. Äldre version arkiveras. Checklistans PDF lagras <strong>helt in-memory</strong> via CV-API:t (<code>CVAPI_DOC_CREATE</code> / <code>CVAPI_DOC_CHECKIN</code>) – samma mekanism som SAP-standardens <code>create_dms_from_spool</code>, utan temp-fil/SAPFTPA.</p>
     <div class="meta">
-      <span class="chip"><strong>Ny FM:</strong> Z_EAM_CL_CREATE_DMS_LOT_VRS</span>
+      <span class="chip"><strong>FM:</strong> ZVFI_FG_E_AM_D_CR_DMS_LOT_VER</span>
       <span class="chip"><strong>Ersätter:</strong> EAM_CL_CREATE_DMS_LOT</span>
-      <span class="chip"><strong>Status:</strong> Grundflöde klart &middot; 1 punkt på backlog</span>
+      <span class="chip"><strong>Lagring:</strong> in-memory (CV-API)</span>
+      <span class="chip"><strong>Status:</strong> Implementerad &middot; väntar systemtest</span>
     </div>
   </header>
 
@@ -243,6 +244,7 @@
       <li><a href="#bakgrund">Bakgrund och återanvändning</a></li>
       <li><a href="#flode">Flöde</a></li>
       <li><a href="#implementation">Implementation</a></li>
+      <li><a href="#bapis">BAPI:er som används</a></li>
       <li><a href="#konstanter">Konstanter att bekräfta</a></li>
       <li><a href="#designval">Designval</a></li>
       <li><a href="#forbattringar">Förbättringar</a></li>
@@ -258,7 +260,7 @@
   ls_drad-objky = i_qals-prueflos.</code></pre>
       <figcaption>eam_cl_create_dms_lot, rad 109–110</figcaption>
     </figure>
-    <p>Vi bygger en ny FM <code>Z_EAM_CL_CREATE_DMS_LOT_VRS</code> med <strong>samma interface</strong> som lot-FM:en (drop-in i QM follow-up action), men ersätter steg 3 med egen logik (BAPI:er) och länkar mot tekniskt objekt + order.</p>
+    <p>Vi bygger en ny FM <code>ZVFI_FG_E_AM_D_CR_DMS_LOT_VER</code> med <strong>samma interface</strong> som lot-FM:en (drop-in i QM follow-up action). Steg 3 byggs på <strong>samma in-memory-mekanism som standardens <code>create_dms_from_spool</code></strong> – spool &rarr; PDF (xstring) &rarr; <code>DRAO</code>-tabell &rarr; <code>CVAPI_DOC_CREATE</code> (<code>pf_content_provide='TBL'</code>), helt utan temp-fil. Skillnaden mot standard: vi länkar mot <strong>tekniskt objekt + order + inspektionslot</strong>, klassificerar dokumentet (provplan) och hanterar versionering.</p>
   </section>
 
   <section class="card" id="flode">
@@ -266,21 +268,20 @@
     <div class="diagram">
 <pre class="mermaid">
 flowchart TD
-  Start[Start follow-up action] --> Guards["Guard: läsa lot/order, otpl_read, validera workpaper=EAM_CL_PRINT"]
+  Start[Start follow-up action] --> Guards["Guard: läs lot/order, otpl_read, validera workpaper=EAM_CL_PRINT"]
   Guards -->|deaktiverad / ej config| Stop[Return]
-  Guards --> Statuses["Härled status från TDWS: released=FRKNZ, archived=DOSAR='A'"]
-  Statuses --> Tech["Tekniskt objekt direkt från i_qals: LS_EQUNR &rarr; EQUI, annars LS_TPLNR &rarr; IFLOT"]
-  Tech --> Spool["Generera spool via EAM_CL_PRINT &rarr; konvertera till PDF"]
-  Spool --> Lock["ENQUEUE serie (valfritt låsobjekt): tekn objekt + nyckel-chars"]
-  Lock --> Search["Sök dokument: doctype + objektlänk EQ/FL + separata chars D_CL_PLNTY/PLNNR/PLNAL/WERKS/MATNR"]
-  Search -->|hittad| NewVrs["BAPI_DOCUMENT_CREATENEWVRS2"]
-  NewVrs --> Checkin["Checka in nytt PDF som original"]
-  Checkin --> Archive["Sätt föregående version till Archived"]
-  Search -->|ej hittad| Create["BAPI_DOCUMENT_CREATE2 + klassificering"]
-  Archive --> Links["Verifiera/komplettera länkar: order + tekniskt objekt"]
-  Create --> Links
-  Links --> Status["Sätt status Released på aktuell version"]
-  Status --> Log["e_protocol + add_msg_to_log + COMMIT (ej i_test)"]
+  Guards --> Doctype["Doctype = gc_doctype (annars otpl) · status ur TDWS (FRKNZ / DOSAR='A')"]
+  Doctype --> Tech["Tekniskt objekt ur i_qals: LS_EQUNR &rarr; EQUI, annars LS_TPLNR &rarr; IFLOT"]
+  Tech --> Spool["EAM_CL_PRINT-spool &rarr; CONVERT_OTFSPOOLJOB_2_PDF (xstring) &rarr; DRAO-tabell"]
+  Spool --> Lock["ENQUEUE serie (valfritt)"]
+  Lock --> Search["Sök: DRAD doctype + objektlänk EQ/FL + klass-match D_CL_PLNTY/PLNNR/PLNAL/WERKS/MATNR"]
+  Search -->|ej hittad| Create["CVAPI_DOC_CREATE: DIR + 3 länkar + PDF in-memory, ingen status &rarr; icke-releasad"]
+  Create --> Rel1["COMMIT &rarr; BAPI_OBJCL_CHANGE (5 chars) &rarr; sätt Released &rarr; COMMIT"]
+  Search -->|hittad| NewVrs["CVAPI_DOC_CREATE (doknr + nästa dokvr): ny version + 3 länkar + PDF in-memory, ingen status"]
+  NewVrs --> Rel2["COMMIT &rarr; BAPI_OBJCL_CHANGE (5 chars) &rarr; sätt Released &rarr; COMMIT"]
+  Rel2 --> Archive["Arkivera föregående version &rarr; COMMIT"]
+  Rel1 --> Log["E_PROTOCOL + add_msg_to_log + COMMIT (ej i_test)"]
+  Archive --> Log
 </pre>
     </div>
   </section>
@@ -292,21 +293,43 @@ flowchart TD
       <li><strong>Guard clauses:</strong> läs <code>i_maintorderinspectionlot</code> (skip om <code>mainchecklistisdeactivated</code>), läs <code>aufk</code>, <code>otpl_read</code>, validera <code>t390</code>/<code>EAM_CL_PRINT</code> och hämta formulärtitel.</li>
       <li><strong>Status från customizing:</strong> <code>determine_statuses</code> läser released/archived ur <code>TDWS</code> per doctype – released = <code>FRKNZ = 'X'</code>, archived = status typ <code>DOSAR = 'A'</code>. Konstanterna <code>gc_status_released</code>/<code>gc_status_archived</code> är bara fallback.</li>
       <li><strong>Tekniskt objekt (per lot!):</strong> läs objektet <strong>direkt från <code>i_qals</code></strong> – <code>EQUI</code> om <code>LS_EQUNR</code> finns, annars <code>IFLOT</code> från <code>LS_TPLNR</code>. En order kan ha en objektlista med en lot per objekt, så objektet måste tas per lot, inte från orderhuvudet.</li>
-      <li><strong>Spool &rarr; PDF:</strong> återanvänd EXPORT/<code>SUBMIT</code>/IMPORT-blocket; konvertera spool med <code>CONVERT_OTFSPOOLJOB_2_PDF</code> (fallback <code>CONVERT_ABAPSPOOLJOB_2_PDF</code>) &rarr; <code>SCMS_XSTRING_TO_BINARY</code> &rarr; <code>DRAO</code>.</li>
+      <li><strong>Spool &rarr; PDF (in-memory):</strong> återanvänd EXPORT/<code>SUBMIT EAM_CL_PRINT</code>/IMPORT-blocket; konvertera spoolen med <code>CONVERT_OTFSPOOLJOB_2_PDF</code> och <code>pdf_destination='X'</code> så PDF:en kommer direkt som <code>xstring</code> (<code>bin_file</code>) – inte via <code>tline</code>-tabell. Dela sedan xstringen i en binär <code>DRAO</code>-tabell med <code>SCMS_XSTRING_TO_BINARY</code>. <span class="tag tag-confirm">löser 0-byte-buggen</span></li>
       <li><strong>Sök befintligt dokument:</strong> <code>SELECT FROM drad WHERE dokar = &lt;doctype&gt; AND dokob = &lt;EQUI/IFLOT&gt; AND objky = &lt;tekn objekt&gt;</code>; för träffarna läs klassificering (klasstyp <code>017</code>, klass <code>D_CL</code>, objekttabell <code>DRAW</code>) via <code>BAPI_OBJCL_GETDETAIL</code> och matcha <strong>alla nyckel-egenskaper var för sig</strong> (ingen konkatenering): <code>D_CL_PLNTY</code>/<code>D_CL_PLNNR</code>/<code>D_CL_PLNAL</code>/<code>D_CL_WERKS</code>/<code>D_CL_MATNR</code>. Match kräver att samtliga stämmer; välj högsta <code>DOKVR</code>.</li>
-      <li><strong>Gren – ej hittad (första version):</strong> <code>BAPI_DOCUMENT_CREATE2</code> med <code>doctype</code>/<code>storagecategory</code>, beskrivning, objektlänkar (<code>PMAUFK</code> order + <code>EQUI</code>/<code>IFLOT</code> tekn objekt), PDF-fil och status Released; sätt klassificering via <code>BAPI_OBJCL_CHANGE</code>.</li>
-      <li><strong>Gren – hittad (ny version):</strong> <code>BAPI_DOCUMENT_CREATENEWVRS2</code> (kopierar objektlänkar + klassificering enligt doc-type-config "When New Version 1"); checka in nytt PDF som original (<code>BAPI_DOCUMENT_CHECKIN2</code>); återställ nyckel-egenskaperna; sätt <strong>föregående version</strong> till Archived (<code>BAPI_DOCUMENT_SETSTATUS</code>).</li>
+      <li><strong>Gren – ej hittad (första version):</strong> <code>CVAPI_DOC_CREATE</code> skapar DIR:en <em>med originalet</em> i ett svep – doctype, beskrivning, objektlänkar (<code>EQUI</code>/<code>IFLOT</code> + <code>PMAUFK</code> + <code>QALS</code>) och PDF-innehåll (<code>pt_content</code> = DRAO). <strong>Ingen status sätts</strong> &rarr; dokumentet landar i doktypens icke-releasade initialstatus. Därefter <code>COMMIT</code>, sätt de 5 klass-egenskaperna med <code>BAPI_OBJCL_CHANGE</code>, och sätt <strong>Released explicit</strong> &rarr; <code>COMMIT</code>.</li>
+      <li><strong>Gren – hittad (ny version):</strong> <strong>samma mekanism som första versionen</strong> – <code>CVAPI_DOC_CREATE</code> med <code>ps_draw-doknr</code> = befintligt dokument och <code>ps_draw-dokvr</code> = nästa version skapar den nya versionen <em>med originalet</em> i ett svep (3 länkar + PDF in-memory, ingen status). Sen <code>COMMIT</code>, klassificera (5 chars), sätt Released explicit, och arkivera <strong>föregående version</strong> med <code>BAPI_DOCUMENT_CHANGE2</code>. <strong>Ingen <code>CREATENEWVRS2</code></strong> – fällan där en ny version hamnar i releasad/låst status och blockerar incheckning av originalet kan därmed inte uppstå.</li>
       <li><strong>Samtidighet (valfritt låsobjekt):</strong> <code>lock_series</code> gör <code>ENQUEUE_&lt;lockobjekt&gt;</code> (nyckelfält <code>SCOPE</code>, CHAR50, läge E) på serien med <code>_wait = 'X'</code>; släpps vid <code>COMMIT WORK</code>. Saknas objektet degraderar FM:en med varning. <code>gc_lock_object = space</code> stänger av.</li>
       <li><strong>Idempotens (valfritt):</strong> om <code>gc_char_lot</code> är satt lagras <code>PRUEFLOS</code> på versionen och samma lot skapar ingen dubblettversion vid omkörning.</li>
-      <li><strong>Säkerhetskontroll länkar:</strong> verifiera att aktuell version har länk till tekniskt objekt (EQ/FL) och till aktuell order; lägg till saknad länk (skyddsnät trots copy-on-new-version).</li>
-      <li><strong>Status:</strong> aktuell version &rarr; Released, gammal &rarr; Archived (värden ur <code>TDWS</code>).</li>
+      <li><strong>Objektlänkar:</strong> tekniskt objekt (EQ/FL) + order (<code>PMAUFK</code>) + inspektionslot (<code>QALS</code>). På ny version säkerställs aktuell lots länkar via <code>BAPI_DOCUMENT_GETDETAIL2</code>/<code>CHANGE2</code> (idempotent skyddsnät); lots ackumuleras som historik.</li>
+      <li><strong>Status (status type L / semi-lock):</strong> den releasade statusen (<code>RE</code>) är statustyp <code>L</code> så att <strong>klassificeringen kan sättas efter att dokumentet skapats</strong>. Statustyp <code>L</code> kan inte vara initialstatus &rarr; systemet auto-releasar inte; <strong>programmet sätter Released explicit</strong> efter att originalet är committat (annars meddelande 26269). Gammal version &rarr; Archived. Värden ur <code>TDWS</code>. Detta är en <strong>staged-commit-modell</strong> (skapa &rarr; COMMIT &rarr; klassificera/release &rarr; COMMIT).</li>
       <li><strong>Logg/commit:</strong> bygg <code>E_PROTOCOL</code> (meddelanden), anropa <code>cl_eam_cl_msg_tool=&gt;add_msg_to_log</code>, <code>COMMIT WORK</code> om inte <code>I_TEST</code>. Använd <code>i_test</code> som testrun i BAPI:erna (ingen commit).</li>
     </ul>
+  </section>
+
+  <section class="card" id="bapis">
+    <h2>BAPI:er och funktionsmoduler som används</h2>
+    <p>Lagringen är <strong>helt in-memory</strong> via CV-API:t – PDF:en flyttas aldrig till en filyta. Nedan vad varje anrop gör och var i flödet det körs.</p>
+    <ul>
+      <li><strong><code>cl_eam_cl_cu=&gt;otpl_read</code></strong> – läser shop paper-/utskriftsconfig för ordertypen (<code>DOCTYPE</code>, <code>STORAGECATEGORY</code>, <code>WORKPAPER</code>).</li>
+      <li><strong><code>SYSTEM_UUID_C_CREATE</code> + <code>SUBMIT EAM_CL_PRINT</code></strong> – genererar checklistans spool; UUID:t kopplar utskriftsparametrarna via minnet (<code>id_iprt_options</code>).</li>
+      <li><strong><code>CONVERT_OTFSPOOLJOB_2_PDF</code></strong> (<code>pdf_destination='X'</code>) – konverterar OTF-spoolen till PDF direkt som <code>xstring</code>.</li>
+      <li><strong><code>SCMS_XSTRING_TO_BINARY</code></strong> – delar PDF-xstringen i en binär <code>DRAO</code>-tabell som CV-API:t läser in-memory (<code>pf_content_provide='TBL'</code>).</li>
+      <li><strong><code>CVAPI_DOC_CREATE</code></strong> – skapar dokumentet <em>med originalet</em> i ett anrop, utan status. <em>Första version:</em> nytt doknr. <em>Ny version:</em> samma anrop med <code>ps_draw-doknr</code> = befintligt dokument + <code>ps_draw-dokvr</code> = nästa version. Returnerar dok-nyckeln. Detta är den <strong>enda</strong> vägen som skapar dokument/versioner.</li>
+      <li><strong><code>CVAPI_DOC_CHECKIN</code></strong> – <em>(reserverad, används ej i scenario 1/2)</em> in-memory-incheckning av original på en befintlig version; vägen för det framtida "byt fil på samma version"-scenariot.</li>
+      <li><strong><code>BAPI_DOCUMENT_GETACTVERSION</code></strong> – hämtar aktiv (högsta) version inför sökmatchning och versionering.</li>
+      <li><strong><code>BAPI_OBJCL_GETDETAIL</code> / <code>BAPI_OBJCL_CHANGE</code></strong> – läser/sätter de 5 klassificerings­egenskaperna (klass <code>D_CL</code>, klasstyp <code>017</code>) som identifierar dokumentserien (provplan). Används vid sökmatchning, vid sättning på nytt dokument och vid återställning på ny version.</li>
+      <li><strong><code>BAPI_DOCUMENT_GETDETAIL2</code></strong> – läser befintliga objektlänkar för idempotent länk-säkring.</li>
+      <li><strong><code>BAPI_DOCUMENT_CHANGE2</code></strong> – sätter dokumentstatus (Released på aktuell version, Archived på föregående) och lägger till saknade objektlänkar.</li>
+      <li><strong><code>ENQUEUE_&lt;lockobjekt&gt;</code></strong> (valfritt) – samtidighetslås på serien; släpps vid <code>COMMIT WORK</code>.</li>
+      <li><strong><code>cl_eam_cl_msg_tool=&gt;add_msg_to_log</code></strong> – skriver applikationsloggen (<code>E_PROTOCOL</code> + BAPI-returer).</li>
+      <li><strong><code>COM_SE_SPOOL_DISPLAY</code></strong> (valfritt, <code>I_DIALOG='X'</code>) – visar spoolen direkt för felsökning.</li>
+    </ul>
+    <p style="margin-top:14px;color:var(--muted);font-size:14.5px"><strong>Framåtblick:</strong> för scenariot "samma lot körs om med ändrad fil" är planen <code>CVAPI_DOC_CHECKOUT_VIEW</code> + <code>CVAPI_DOC_CHECKIN</code> på samma version, med content versions aktiverat för full spårbarhet. (Inte byggt än.)</p>
   </section>
 
   <section class="card" id="konstanter">
     <h2>Konstanter <span style="font-weight:400;font-size:14px;color:var(--muted)">(bekräftade mot systemets customizing)</span></h2>
     <ul>
+      <li><code>gc_doctype</code> = dedikerad dokumenttyp för den versionshanterade checklistan (<code>space</code> = använd shop paper-doktypen från <code>otpl_read</code>). Statusnätet måste ha en <strong>icke-releasad initialstatus</strong> och <code>RE</code> som statustyp <code>L</code>.</li>
       <li><code>gc_classtype = '017'</code> (Document Management), klass <code>gc_class = 'D_CL'</code>.</li>
       <li><strong>Nyckel-egenskaper – en char per fält</strong> (klass <code>D_CL</code>, ren läs/skriv utan parsning):
         <ul>
@@ -352,7 +375,7 @@ flowchart TD
       <li>
         <div class="todo-body">
           <span class="todo-id">skeleton</span>
-          Skapa <code>Z_EAM_CL_CREATE_DMS_LOT_VRS</code> med samma interface som <code>EAM_CL_CREATE_DMS_LOT</code> och kopiera guard clauses (lot/order-låsning, otpl_read, workpaper-validering, formulärtitel).
+          Skapa <code>ZVFI_FG_E_AM_D_CR_DMS_LOT_VER</code> med samma interface som <code>EAM_CL_CREATE_DMS_LOT</code> och kopiera guard clauses (lot/order-låsning, otpl_read, workpaper-validering, formulärtitel).
         </div>
         <span class="status done">Klart</span>
       </li>
@@ -380,14 +403,14 @@ flowchart TD
       <li>
         <div class="todo-body">
           <span class="todo-id">create-first</span>
-          Gren första version: BAPI_DOCUMENT_CREATE2 (doctype, storagecategory, beskrivning, objektlänkar order+tekn objekt, PDF, status Released) + BAPI_OBJCL sätter klassificering.
+          Gren första version: CVAPI_DOC_CREATE (doctype, beskrivning, objektlänkar EQ/FL+order+QALS, PDF in-memory, ingen status) &rarr; COMMIT &rarr; BAPI_OBJCL_CHANGE sätter klassificering &rarr; sätt Released explicit.
         </div>
         <span class="status done">Klart</span>
       </li>
       <li>
         <div class="todo-body">
           <span class="todo-id">create-version</span>
-          Gren ny version: BAPI_DOCUMENT_CREATENEWVRS2 + check-in av nytt PDF + sätt föregående version till Archived.
+          Gren ny version: CVAPI_DOC_CREATE (befintligt doknr + nästa dokvr) skapar ny version med PDF in-memory &rarr; klassificera &rarr; Released &rarr; arkivera föregående version. Ingen CREATENEWVRS2.
         </div>
         <span class="status done">Klart</span>
       </li>
@@ -428,6 +451,13 @@ flowchart TD
       </li>
       <li>
         <div class="todo-body">
+          <span class="todo-id">in-memory-storage</span>
+          Omstart av fillagringen till SAP-standardens in-memory CV-API (CVAPI_DOC_CREATE / CVAPI_DOC_CHECKIN), borttagen temp-fil/SAPFTPA. Inkl. fix för 0-byte-original (PDF som xstring via pdf_destination='X') och QALS-objektlänk.
+        </div>
+        <span class="status done">Klart &middot; väntar systemtest</span>
+      </li>
+      <li>
+        <div class="todo-body">
           <span class="todo-id">content-versions-update</span>
           SENARE (efter att grundflödet verifierats): när ett protokoll redan finns för loten ska existerande version uppdateras med ny PDF i stället för att hoppas över (justeringar ska fångas). Förutsätter content versions på doktypen; check-out av gammalt original + ersätt med ny PDF; jämför filstorlek (ev. hash) för att undvika onödiga content-instanser.
         </div>
@@ -437,7 +467,7 @@ flowchart TD
   </section>
 
   <footer>
-    Versionshanterad DMS-checklista &middot; teknisk plan för Z_EAM_CL_CREATE_DMS_LOT_VRS
+    Versionshanterad DMS-checklista &middot; teknisk plan för ZVFI_FG_E_AM_D_CR_DMS_LOT_VER
   </footer>
 
 </div>

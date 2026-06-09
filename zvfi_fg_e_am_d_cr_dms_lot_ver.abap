@@ -904,8 +904,12 @@ ENDFORM.
 *&---------------------------------------------------------------------*
 *&      Form  CREATE_NEW_VERSION
 *&---------------------------------------------------------------------*
-*  Creates a new version of an existing document, copies object links +
-*  classification, checks in the new PDF and ensures links/status.
+*  Creates a new version of an existing document via CVAPI_DOC_CREATE with the
+*  existing doknr + the next dokvr - the SAME atomic in-memory mechanism as the
+*  first version (DIR/version + object links + original PDF in one call, no
+*  status). Then classify + release explicitly, and the caller archives the
+*  previous version. Avoids CREATENEWVRS2 (whose new version can land in a
+*  released/locked status that blocks the original check-in).
 *----------------------------------------------------------------------*
 FORM create_new_version USING    is_otpl        TYPE eam_cl_cu_otpl
                                  iv_doknr       TYPE draw-doknr
@@ -929,21 +933,32 @@ FORM create_new_version USING    is_otpl        TYPE eam_cl_cu_otpl
                                  ct_return      TYPE bapiret2_t
                                  cs_return      TYPE bapiret2.
 
-  DATA: lv_actvr      TYPE draw-dokvr,
-        lv_num        TYPE i,
-        lv_prueflos   TYPE atwrt,
-        lt_copy       TYPE TABLE OF bapi_doc_drad_select,
-        ls_copy       TYPE bapi_doc_drad_select,
-        lv_doctype    TYPE bapi_doc_aux-doctype,
-        lv_docnr      TYPE bapi_doc_aux-docnumber,
-        lv_docpart    TYPE bapi_doc_aux-docpart,
-        lv_docvers    TYPE bapi_doc_aux-docversion,
-        ls_ret        TYPE bapiret2,
-        lv_err        TYPE abap_bool.
+  DATA: lv_actvr     TYPE draw-dokvr,
+        lv_num       TYPE i,
+        lv_prueflos  TYPE atwrt,
+        lt_drad      TYPE TABLE OF dms_db_drad,
+        ls_drad      TYPE dms_db_drad,
+        lt_drat      TYPE TABLE OF dms_db_drat,
+        ls_drat      TYPE dms_db_drat,
+        lt_files     TYPE TABLE OF cvapi_doc_file,
+        ls_file      TYPE cvapi_doc_file,
+        lt_drao      TYPE ty_drao_t,
+        lv_len       TYPE i,
+        ls_draw      TYPE draw,
+        ls_apictl    TYPE cvapi_api_control,
+        ls_msg       TYPE messages,
+        ls_ret       TYPE bapiret2,
+        lv_storcat   TYPE c LENGTH 10,
+        lv_pdf_fname TYPE string,
+        lv_xdokar    TYPE draw-dokar,
+        lv_xdoknr    TYPE draw-doknr,
+        lv_xdoktl    TYPE draw-doktl,
+        lv_xdokvr    TYPE draw-dokvr,
+        lv_err       TYPE abap_bool.
 
   CLEAR: cv_new_dokvr, cs_return.
 
-* Active (highest) version as reference.
+* Next version number from the active (highest) version.
   lv_actvr = iv_dokvr.
   CALL FUNCTION 'BAPI_DOCUMENT_GETACTVERSION'
     EXPORTING
@@ -957,74 +972,95 @@ FORM create_new_version USING    is_otpl        TYPE eam_cl_cu_otpl
   IF lv_actvr IS INITIAL.
     lv_actvr = iv_dokvr.
   ENDIF.
-
-* Next version number (numeric; adjust for alphanumeric versioning).
   lv_num = lv_actvr.
   lv_num = lv_num + 1.
   cv_new_dokvr = |{ lv_num WIDTH = 2 ALIGN = RIGHT PAD = '0' }|.
 
-* Copy all object links from the reference version.
-  ls_copy-objecttype = '*'.
-  APPEND ls_copy TO lt_copy.
+  PERFORM resolve_storage_category USING iv_storage_cat is_otpl
+                                   CHANGING lv_storcat.
 
-* Stage 1: create the new version. No original is copied (the new PDF is checked
-* in below); the version lands in the (non-released) initial status, so no file
-* is required yet. Classification is copied from the reference version.
-  CALL FUNCTION 'BAPI_DOCUMENT_CREATENEWVRS2'
-    EXPORTING
-      refdocumenttype    = is_otpl-doctype
-      refdocumentnumber  = iv_doknr
-      refdocumentpart    = iv_doktl
-      refdocumentversion = lv_actvr
-      newdocumentversion = cv_new_dokvr
-      copyoriginals      = space
-      copyclassification = 'X'
-      copydocbom         = space
-    IMPORTING
-      doctype            = lv_doctype
-      docnumber          = lv_docnr
-      docpart            = lv_docpart
-      docversion         = lv_docvers
-      return             = cs_return
-    TABLES
-      copyobjectlinks    = lt_copy.
-  APPEND cs_return TO ct_return.
-  IF cs_return-type CA 'EAX'.
-    ROLLBACK WORK.
+* Object links: technical object + order + inspection lot. Built explicitly -
+* CVAPI_DOC_CREATE does NOT auto-copy links/classification like CREATENEWVRS2,
+* but we set them the same way as the first version anyway.
+  ls_drad-dokob = iv_dokob.
+  ls_drad-objky = iv_objky.
+  APPEND ls_drad TO lt_drad.
+  CLEAR ls_drad.
+  ls_drad-dokob = 'PMAUFK'.
+  ls_drad-objky = iv_aufnr.
+  APPEND ls_drad TO lt_drad.
+  CLEAR ls_drad.
+  ls_drad-dokob = 'QALS'.
+  ls_drad-objky = is_qals-prueflos.
+  APPEND ls_drad TO lt_drad.
+
+  ls_drat-langu = sy-langu.
+  ls_drat-dktxt = iv_formtitle.
+  APPEND ls_drat TO lt_drat.
+
+  PERFORM build_drao_content USING iv_pdf is_otpl-doctype
+                             CHANGING lt_drao lv_len.
+  IF lt_drao IS INITIAL.
+    PERFORM append_text_msg USING 'E' 'PDF could not be converted to DRAO content'
+      CHANGING ct_return.
+    cs_return-type = 'E'.
+    APPEND cs_return TO ct_return.
     RETURN.
   ENDIF.
-  IF lv_docvers IS NOT INITIAL.
-    cv_new_dokvr = lv_docvers.
+  PERFORM build_pdf_filename USING iv_aufnr is_otpl-workpaper
+                             CHANGING lv_pdf_fname.
+  PERFORM build_original_entry USING lv_storcat iv_wsappl iv_formtitle lv_pdf_fname
+                               CHANGING ls_file.
+  APPEND ls_file TO lt_files.
+
+* Stage 1: create the NEW VERSION with its original in ONE in-memory call - same
+* mechanism as the first version. ps_draw-doknr/dokvr point at the existing
+* document + the next version, so CVAPI_DOC_CREATE adds a new version. No status
+* is set -> non-released initial status. No CREATENEWVRS2, no separate check-in,
+* so the "released-on-new-version blocks the original" pitfall cannot occur.
+  ls_draw-dokar = is_otpl-doctype.
+  ls_draw-doknr = iv_doknr.
+  ls_draw-dokvr = cv_new_dokvr.
+  ls_draw-doktl = iv_doktl.
+
+  CALL FUNCTION 'CVAPI_DOC_CREATE'
+    EXPORTING
+      ps_api_control     = ls_apictl
+      ps_draw            = ls_draw
+      pf_content_provide = 'TBL'
+    IMPORTING
+      psx_message        = ls_msg
+      pfx_dokar          = lv_xdokar
+      pfx_doknr          = lv_xdoknr
+      pfx_doktl          = lv_xdoktl
+      pfx_dokvr          = lv_xdokvr
+    TABLES
+      pt_drad_x          = lt_drad
+      pt_drat_x          = lt_drat
+      pt_files_x         = lt_files
+      pt_content         = lt_drao.
+
+  IF ls_msg-msg_type CA 'EAX'.
+    ROLLBACK WORK.
+    PERFORM append_msg_struct USING ls_msg CHANGING ct_return cs_return.
+    RETURN.
+  ENDIF.
+  IF lv_xdokvr IS NOT INITIAL.
+    cv_new_dokvr = lv_xdokvr.
   ENDIF.
   COMMIT WORK AND WAIT.
 
-* Stage 2: check in the new PDF in-memory (CVAPI), ensure links, (re)assert all
-* key characteristics in one call, then release the new version explicitly.
-* iv_rel_auto is ignored: RE is status type 'L', so release is always explicit.
-  PERFORM checkin_content USING is_otpl iv_doknr cv_new_dokvr iv_doktl
-                                iv_aufnr iv_pdf iv_formtitle iv_wsappl iv_storage_cat
-                          CHANGING ct_return.
-
-  PERFORM ensure_object_link USING is_otpl-doctype iv_doknr cv_new_dokvr iv_doktl
-                                   iv_dokob iv_objky
-                             CHANGING ct_return.
-  PERFORM ensure_object_link USING is_otpl-doctype iv_doknr cv_new_dokvr iv_doktl
-                                   'PMAUFK' iv_aufnr
-                             CHANGING ct_return.
-
-* Link this version to the current inspection lot (lots accumulate as history).
+* Stage 2: classification on the new version (non-released -> editable) then
+* explicit release. iv_rel_auto is ignored: RE is status type 'L'.
   lv_prueflos = is_qals-prueflos.
-  PERFORM ensure_object_link USING is_otpl-doctype iv_doknr cv_new_dokvr iv_doktl
-                                   'QALS' lv_prueflos
-                             CHANGING ct_return.
-
   PERFORM set_doc_classification USING is_otpl-doctype iv_doknr cv_new_dokvr iv_doktl
                                        iv_class iv_classtype it_keys
                                        iv_char_lot lv_prueflos
                                  CHANGING ct_return lv_err.
-
-  PERFORM set_status USING is_otpl-doctype iv_doknr cv_new_dokvr iv_doktl iv_status
-                     CHANGING ct_return.
+  IF lv_err = abap_false.
+    PERFORM set_status USING is_otpl-doctype iv_doknr cv_new_dokvr iv_doktl iv_status
+                       CHANGING ct_return.
+  ENDIF.
   COMMIT WORK.
 
   PERFORM returns_have_error USING ct_return CHANGING lv_err.
