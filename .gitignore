@@ -4,6 +4,7 @@
 # Editor / tooling
 .vscode/
 .cursor/
+.claude/
 
 # SAP standard reference sources (proprietary - not for public publication)
 eam_cl_create_dms_lot.abap

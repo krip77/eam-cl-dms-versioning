@@ -1,2 +1,0 @@
-- [Project layout and canonical files](project-layout.md) — what the single active ABAP FM is, which plan docs are intentional history, and what must never be archived.
-- [Supersession history of the DMS FM](dms-supersession.md) — file-storage → in-memory CVAPI; file renamed not duplicated; no stale drafts on disk as of 2026-06-08.
