@@ -476,19 +476,22 @@ FORM spool_to_pdf USING    iv_spool  TYPE tsp01-rqident
                   CHANGING cv_pdf    TYPE xstring
                            ct_return TYPE bapiret2_t.
 
-  DATA: lt_pdf  TYPE TABLE OF tline,
-        lv_size TYPE i.
+  DATA: lv_size TYPE i.
 
   CLEAR cv_pdf.
 
+* Take the PDF directly as an xstring (pdf_destination='X' -> bin_file), exactly
+* like the standard create_dms_from_spool. Avoids the tline character-table
+* round-trip that corrupts/empties binary content (the 0-byte-original bug).
   CALL FUNCTION 'CONVERT_OTFSPOOLJOB_2_PDF'
     EXPORTING
       src_spoolid              = iv_spool
+      pdf_destination          = 'X'
       no_dialog                = abap_true
+      no_background            = abap_true
     IMPORTING
       pdf_bytecount            = lv_size
-    TABLES
-      pdf                      = lt_pdf
+      bin_file                 = cv_pdf
     EXCEPTIONS
       err_no_otf_spooljob      = 1
       err_no_spooljob          = 2
@@ -502,22 +505,7 @@ FORM spool_to_pdf USING    iv_spool  TYPE tsp01-rqident
       err_btcjob_submit_failed = 10
       err_btcjob_close_failed  = 11
       OTHERS                   = 12.
-  IF sy-subrc <> 0.
-    PERFORM append_sysmsg_return CHANGING ct_return.
-    RETURN.
-  ENDIF.
-
-  CALL FUNCTION 'SCMS_BINARY_TO_XSTRING'
-    EXPORTING
-      input_length = lv_size
-    IMPORTING
-      buffer       = cv_pdf
-    TABLES
-      binary_tab   = lt_pdf
-    EXCEPTIONS
-      failed       = 1
-      OTHERS       = 2.
-  IF sy-subrc <> 0.
+  IF sy-subrc <> 0 OR cv_pdf IS INITIAL.
     PERFORM append_sysmsg_return CHANGING ct_return.
     CLEAR cv_pdf.
   ENDIF.
@@ -819,13 +807,17 @@ FORM create_first_version USING    is_otpl        TYPE eam_cl_cu_otpl
   PERFORM resolve_storage_category USING iv_storage_cat is_otpl
                                    CHANGING lv_storcat.
 
-* Object links: technical object + order (DMS_DB_DRAD for CVAPI).
+* Object links: technical object + order + inspection lot (DMS_DB_DRAD for CVAPI).
   ls_drad-dokob = iv_dokob.
   ls_drad-objky = iv_objky.
   APPEND ls_drad TO lt_drad.
   CLEAR ls_drad.
   ls_drad-dokob = 'PMAUFK'.
   ls_drad-objky = iv_aufnr.
+  APPEND ls_drad TO lt_drad.
+  CLEAR ls_drad.
+  ls_drad-dokob = 'QALS'.
+  ls_drad-objky = is_qals-prueflos.
   APPEND ls_drad TO lt_drad.
 
 * Description (DMS_DB_DRAT for CVAPI).
@@ -1020,7 +1012,12 @@ FORM create_new_version USING    is_otpl        TYPE eam_cl_cu_otpl
                                    'PMAUFK' iv_aufnr
                              CHANGING ct_return.
 
+* Link this version to the current inspection lot (lots accumulate as history).
   lv_prueflos = is_qals-prueflos.
+  PERFORM ensure_object_link USING is_otpl-doctype iv_doknr cv_new_dokvr iv_doktl
+                                   'QALS' lv_prueflos
+                             CHANGING ct_return.
+
   PERFORM set_doc_classification USING is_otpl-doctype iv_doknr cv_new_dokvr iv_doktl
                                        iv_class iv_classtype it_keys
                                        iv_char_lot lv_prueflos
