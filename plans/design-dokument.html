@@ -241,6 +241,7 @@
   <nav class="toc">
     <p>Innehåll</p>
     <ol>
+      <li><a href="#laast">⚠️ Låst designbeslut</a></li>
       <li><a href="#bakgrund">Bakgrund och återanvändning</a></li>
       <li><a href="#flode">Flöde</a></li>
       <li><a href="#implementation">Implementation</a></li>
@@ -251,6 +252,18 @@
       <li><a href="#checklista">Checklista / arbetsmoment</a></li>
     </ol>
   </nav>
+
+  <section class="card" id="laast" style="border-color: color-mix(in srgb, var(--amber) 45%, var(--border)); background: var(--amber-soft);">
+    <h2 style="border-bottom-color: color-mix(in srgb, var(--amber) 30%, transparent);">⚠️ Låst designbeslut – ändra inte skapande-logiken</h2>
+    <p><strong>Verifierat i systemet:</strong> dokumenttypen kan <strong>inte sparas utan att en status sätts</strong> – status (och description) är obligatoriska. Det är en doktyp där enbart automatiska dokument skapas, så det är medvetet uppsatt så.</p>
+    <p><strong>Konsekvens:</strong> dokumentet måste <strong>skapas <em>och</em> få sitt original i ETT enda anrop</strong> – <code>CVAPI_DOC_CREATE</code> med innehållet i <code>pt_content</code>. Det går inte att spara ett tomt/statuslöst dokument och checka in originalet i ett andra steg. Följande vägar är <strong>testade och genererar fel</strong> – använd dem inte:</p>
+    <ul>
+      <li>❌ Skapa tomt dokument först, checka in originalet i ett separat steg.</li>
+      <li>❌ <code>BAPI_DOCUMENT_CREATE2</code> + fil-sökväg / temp-fil (SAPFTPA).</li>
+      <li>❌ <code>BAPI_DOCUMENT_CREATENEWVRS2</code> + separat <code>CVAPI_DOC_CHECKIN</code> – den nya versionen kan hamna i releasad/låst status och blockerar incheckningen av originalet.</li>
+    </ul>
+    <p><strong>Endast <code>CVAPI_DOC_CREATE</code> får användas för att skapa dokument och nya versioner.</strong> För en ny version: samma anrop med <code>ps_draw-doknr</code> = befintligt dokument + <code>ps_draw-dokvr</code> = nästa version. Klassificering och Released-status sätts <em>efter</em> skapandet (separat steg), originalet <em>i</em> skapandet. Detta är medvetet och verifierat – riv inte upp det.</p>
+  </section>
 
   <section class="card" id="bakgrund">
     <h2>Bakgrund och återanvändning</h2>
