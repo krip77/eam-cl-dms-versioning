@@ -32,21 +32,28 @@ FUNCTION zvfi_fg_e_am_d_cr_dms_lot_ver.
 *   1. Guard: read checklist/order/config, validate EAM_CL_PRINT.
 *   2. Get the technical object PER LOT directly from i_qals (LS_EQUNR/LS_TPLNR).
 *      (An order can have an object list -> one lot per object.)
-*   3. Generate the protocol spool and convert it to PDF.
+*   3. Generate the protocol spool and convert it to PDF (xstring, in-memory).
 *   4. Search for an existing document (doctype + object link to the technical
 *      object + matching inspection plan in the classification, class type 017).
-*   5a. Found -> create a NEW VERSION, check in the new PDF, archive old version.
-*   5b. Not found -> create the first version with links + classification + file.
-*   6. Ensure links (order + technical object), set status, log.
+*   5a. Found -> create a NEW VERSION via CVAPI_DOC_CREATE (existing doknr + next
+*       dokvr), classify, release, then archive the old version.
+*   5b. Not found -> create the first version via CVAPI_DOC_CREATE, classify, release.
+*   6. Log + commit.
+*
+*  Storage is fully IN-MEMORY: CVAPI_DOC_CREATE with the PDF in pt_content (DRAO),
+*  exactly like the standard create_dms_from_spool - no temp file, no SAPFTPA, no
+*  S_DATASET. CVAPI_DOC_CREATE is the ONLY way documents/versions are created here:
+*  status + description are mandatory on the doctype, so create + original must be
+*  one atomic call (do not split into create + check-in - see the design doc).
 *
 *  >>> TO VERIFY/FILL IN ON THE SYSTEM (see constants below) <<<
+*   - GC_DOCTYPE: dedicated doctype whose status network is non-released initial
+*     -> RE as status type 'L' (semi-lock, classification stays editable) -> archive
+*     (DOSAR='A'). Blank = use the shop-paper doctype from otpl_read.
 *   - GC_CLASS + the GC_CHAR_* key characteristics (one per field) + GC_CHAR_LOT.
-*   - GC_STATUS_RELEASED / GC_STATUS_ARCHIVED : document status (FR/AR in config).
+*   - GC_STATUS_RELEASED / GC_STATUS_ARCHIVED : fallback only; read at runtime from TDWS.
 *   - GC_IPRT_OPTIONS : must match the standard global 'id_iprt_options'
 *     in the function group for EAM_CL_PRINT (memory id for print options).
-*   - The status network of the doctype must allow the transition FR -> AR.
-*   - The temporary PDF is written on the application server (DIR_TEMP);
-*     requires S_DATASET. If needed: switch to in-memory checkin (CVAPI_DOC_CHECKIN).
 *   - The FORM routines below go into the function group include (e.g. LZ...F01).
 *----------------------------------------------------------------------
 
@@ -536,9 +543,9 @@ ENDFORM.
 *&      Form  BUILD_DRAO_CONTENT
 *&---------------------------------------------------------------------*
 *  Converts the PDF (xstring) into the in-memory DMS originals table (DRAO)
-*  that CVAPI_DOC_CREATE / CVAPI_DOC_CHECKIN consume with
-*  pf_content_provide = 'TBL'. Lifted verbatim from the standard
-*  create_dms_from_spool: no temp file, no SAPFTPA, no S_DATASET.
+*  that CVAPI_DOC_CREATE consumes with pf_content_provide = 'TBL'. Lifted
+*  verbatim from the standard create_dms_from_spool: no temp file, no SAPFTPA,
+*  no S_DATASET.
 *----------------------------------------------------------------------*
 FORM build_drao_content USING    iv_pdf   TYPE xstring
                                  iv_dokar TYPE draw-dokar
@@ -1072,75 +1079,6 @@ FORM create_new_version USING    is_otpl        TYPE eam_cl_cu_otpl
 ENDFORM.
 
 *&---------------------------------------------------------------------*
-*&      Form  CHECKIN_CONTENT
-*&---------------------------------------------------------------------*
-*  Checks the new PDF in as the original of an existing version, fully
-*  in-memory (CVAPI_DOC_CHECKIN, pf_content_provide='TBL'). Same DRAO content
-*  mechanism as create_dms_from_spool - no temp file, no SAPFTPA, no S_DATASET.
-*  >>> VERIFY on the system (SE37): exact CVAPI_DOC_CHECKIN parameter names
-*      (pf_dokar/doknr/doktl/dokvr, ps_api_control, pt_files_x, pt_content) and
-*      whether the version's released status must allow original changes (status
-*      type 'O'). With content versions active the old original becomes a
-*      Not-Active content version and the new one Active. <<<
-*----------------------------------------------------------------------*
-FORM checkin_content USING    is_otpl        TYPE eam_cl_cu_otpl
-                              iv_doknr       TYPE draw-doknr
-                              iv_dokvr       TYPE draw-dokvr
-                              iv_doktl       TYPE draw-doktl
-                              iv_aufnr       TYPE aufnr
-                              iv_pdf         TYPE xstring
-                              iv_formtitle   TYPE papertext
-                              iv_wsappl      TYPE dappl
-                              iv_storage_cat TYPE c
-                     CHANGING ct_return      TYPE bapiret2_t.
-
-  DATA: lt_files     TYPE TABLE OF cvapi_doc_file,
-        ls_file      TYPE cvapi_doc_file,
-        lt_drao      TYPE ty_drao_t,
-        lv_len       TYPE i,
-        ls_apictl    TYPE cvapi_api_control,
-        ls_msg       TYPE messages,
-        lv_storcat   TYPE c LENGTH 10,
-        lv_pdf_fname TYPE string,
-        lv_dummy     TYPE bapiret2.
-
-  PERFORM resolve_storage_category USING iv_storage_cat is_otpl
-                                   CHANGING lv_storcat.
-
-  PERFORM build_drao_content USING iv_pdf is_otpl-doctype
-                             CHANGING lt_drao lv_len.
-  IF lt_drao IS INITIAL.
-    PERFORM append_text_msg USING 'E' 'PDF could not be converted to DRAO content'
-      CHANGING ct_return.
-    RETURN.
-  ENDIF.
-
-  PERFORM build_pdf_filename USING iv_aufnr is_otpl-workpaper
-                             CHANGING lv_pdf_fname.
-  PERFORM build_original_entry USING lv_storcat iv_wsappl iv_formtitle lv_pdf_fname
-                               CHANGING ls_file.
-  APPEND ls_file TO lt_files.
-
-  CALL FUNCTION 'CVAPI_DOC_CHECKIN'
-    EXPORTING
-      pf_dokar           = is_otpl-doctype
-      pf_doknr           = iv_doknr
-      pf_doktl           = iv_doktl
-      pf_dokvr           = iv_dokvr
-      ps_api_control     = ls_apictl
-      pf_content_provide = 'TBL'
-    IMPORTING
-      psx_message        = ls_msg
-    TABLES
-      pt_files_x         = lt_files
-      pt_content         = lt_drao.
-
-  IF ls_msg-msg_type CA 'EAX'.
-    PERFORM append_msg_struct USING ls_msg CHANGING ct_return lv_dummy.
-  ENDIF.
-ENDFORM.
-
-*&---------------------------------------------------------------------*
 *&      Form  APPEND_MSG_STRUCT
 *&---------------------------------------------------------------------*
 *  Maps a CVAPI 'messages' structure to a complete BAPIRET2 row (so the
@@ -1261,70 +1199,6 @@ FORM set_doc_classification USING    iv_doctype   TYPE draw-dokar
       return             = lt_ret.
   APPEND LINES OF lt_ret TO ct_return.
   PERFORM returns_have_error USING lt_ret CHANGING cv_err.
-ENDFORM.
-
-*&---------------------------------------------------------------------*
-*&      Form  SET_DOC_CHAR
-*&---------------------------------------------------------------------*
-*  Sets/updates a characteristic in the document's classification without
-*  clearing the other values (reads existing first and sends everything back).
-*----------------------------------------------------------------------*
-FORM set_doc_char USING    iv_doctype   TYPE draw-dokar
-                           iv_doknr     TYPE draw-doknr
-                           iv_dokvr     TYPE draw-dokvr
-                           iv_doktl     TYPE draw-doktl
-                           iv_class     TYPE klasse_d
-                           iv_classtype TYPE klassenart
-                           iv_charname  TYPE atnam
-                           iv_value     TYPE atwrt
-                  CHANGING ct_return    TYPE bapiret2_t.
-
-  DATA: lv_key  TYPE c LENGTH 50,
-        lt_num  TYPE TABLE OF bapi1003_alloc_values_num,
-        lt_char TYPE TABLE OF bapi1003_alloc_values_char,
-        lt_curr TYPE TABLE OF bapi1003_alloc_values_curr,
-        lt_ret  TYPE TABLE OF bapiret2,
-        ls_char TYPE bapi1003_alloc_values_char.
-
-  PERFORM build_classif_objectkey USING iv_doctype iv_doknr iv_dokvr iv_doktl
-                                  CHANGING lv_key.
-
-  CALL FUNCTION 'BAPI_OBJCL_GETDETAIL'
-    EXPORTING
-      objectkey       = lv_key
-      objecttable     = 'DRAW'
-      classnum        = iv_class
-      classtype       = iv_classtype
-    TABLES
-      allocvaluesnum  = lt_num
-      allocvalueschar = lt_char
-      allocvaluescurr = lt_curr
-      return          = lt_ret.
-
-  READ TABLE lt_char ASSIGNING FIELD-SYMBOL(<char>)
-       WITH KEY charact = iv_charname.
-  IF sy-subrc = 0.
-    <char>-value_neutral = iv_value.
-    <char>-value_char    = iv_value.
-  ELSE.
-    ls_char-charact       = iv_charname.
-    ls_char-value_neutral = iv_value.
-    ls_char-value_char    = iv_value.
-    APPEND ls_char TO lt_char.
-  ENDIF.
-
-  CALL FUNCTION 'BAPI_OBJCL_CHANGE'
-    EXPORTING
-      objectkey          = lv_key
-      objecttable        = 'DRAW'
-      classnum           = iv_class
-      classtype          = iv_classtype
-    TABLES
-      allocvaluesnumnew  = lt_num
-      allocvaluescharnew = lt_char
-      allocvaluescurrnew = lt_curr
-      return             = lt_ret.
-  APPEND LINES OF lt_ret TO ct_return.
 ENDFORM.
 
 *&---------------------------------------------------------------------*
