@@ -32,9 +32,12 @@ previous version, and releases the newest one.
    | `D_CL_WERKS`   | `QALS-WERK`  | CHAR4  |
    | `D_CL_MATNR`   | `QALS-MATNR` | CHAR18 |
 
-6. **First version** – `BAPI_DOCUMENT_CREATE2` + classification via `BAPI_OBJCL_CHANGE`.
-7. **New version** – `BAPI_DOCUMENT_CREATENEWVRS2`, check-in new PDF
-   (`BAPI_DOCUMENT_CHECKIN2`), re-assert characteristics, archive the previous version.
+6. **First version** – `CVAPI_DOC_CREATE` (DIR + PDF original in one atomic
+   in-memory call), then classification via `BAPI_OBJCL_CHANGE` and explicit release.
+7. **New version** – the same `CVAPI_DOC_CREATE` mechanism with the existing
+   document number + next version (one shared FORM for both paths), re-assert
+   characteristics, release, archive the previous version. No `CREATENEWVRS2`,
+   no separate check-in – see the design doc.
 8. **Concurrency (optional)** – `ENQUEUE` on the series via an optional customer lock
    object (single key field `SCOPE`, CHAR50, mode E), released at `COMMIT WORK`.
    Degrades gracefully with a warning if the lock object is missing.
